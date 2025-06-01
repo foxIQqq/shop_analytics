@@ -1,0 +1,22 @@
+{
+  "default_connections": [
+    {
+      "id": "shop_analytics",
+      "name": "Shop Analytics",
+      "host": "http://localhost:8123",
+      "login": "default",
+      "password": "",
+      "checked": true
+    }
+  ],
+  "settings": {
+    "editor": {
+      "theme": "dark",
+      "fontSize": 13,
+      "lineHeight": 24
+    },
+    "user_settings": {
+      "theme": "dark"
+    }
+  }
+} 

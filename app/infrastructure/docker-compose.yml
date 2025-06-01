@@ -1,0 +1,282 @@
+services:
+  # Хранилища данных
+  postgres:
+    image: postgres:13
+    container_name: shop-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: shop
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../infrastructure/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d shop"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.0.0
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data:/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    ports:
+      - "8123:8123"  # HTTP-интерфейс
+      - "19000:9000" # Измененный порт для Native protocol
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_DB=analytics
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ../streaming/clickhouse_setup.sql:/docker-entrypoint-initdb.d/clickhouse_setup.sql
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--spider", "--tries=1", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Обработка данных
+  spark-master:
+    image: bitnami/spark:3.4
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../data_ingestion:/app/data_ingestion:ro
+      - ../utils:/app/utils:ro
+      - ../batch_processing:/app/batch_processing:ro
+      - ../streaming:/app/streaming:ro
+      - ../configs:/app/configs:ro
+      - spark_repository:/opt/bitnami/spark/.ivy
+
+  spark-worker:
+    image: bitnami/spark:3.4
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    volumes:
+      - ../data_ingestion:/app/data_ingestion:ro
+      - ../utils:/app/utils:ro
+      - ../batch_processing:/app/batch_processing:ro
+      - ../streaming:/app/streaming:ro
+      - ../configs:/app/configs:ro
+      - spark_repository:/opt/bitnami/spark/.ivy
+
+  # API сервис
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      POSTGRES_URL: postgresql://admin:password@postgres:5432/shop
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../data_ingestion:/app/data_ingestion
+      - ../utils:/app/utils
+
+  # Сервис инициализации
+  init-services:
+    image: docker:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../streaming/clickhouse_setup.sql:/clickhouse_setup.sql
+    command: >
+      sh -c "
+        # Ждем пока сервисы запустятся
+        sleep 15
+        
+        # Создаем топики Kafka
+        docker exec kafka bash -c '
+          kafka-topics --create --topic purchases --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 --if-not-exists &&
+          kafka-topics --create --topic products-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 --if-not-exists &&
+          kafka-topics --create --topic sellers-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 --if-not-exists &&
+          kafka-topics --create --topic customers-topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 --if-not-exists
+        '
+        
+        # Создаем бакеты в MinIO
+        docker run --rm --network infrastructure_default minio/mc config host add myminio http://minio:9000 minioadmin &&
+        docker run --rm --network infrastructure_default minio/mc mb --ignore-existing myminio/shop-raw-data &&
+        docker run --rm --network infrastructure_default minio/mc mb --ignore-existing myminio/shop-stage-data &&
+        docker run --rm --network infrastructure_default minio/mc mb --ignore-existing myminio/analytics &&
+        docker run --rm --network infrastructure_default minio/mc mb --ignore-existing myminio/analytics/checkpoints/purchase_processor -p
+        
+        # Устанавливаем зависимости в Spark
+        docker exec spark-master bash -c 'pip install minio pandas pyarrow clickhouse-driver python-dotenv'
+        
+        # Инициализируем ClickHouse таблицы
+        echo 'Waiting for ClickHouse to start...'
+        for i in $(seq 1 30); do
+          if curl -s http://clickhouse:8123/ >/dev/null; then
+            echo 'ClickHouse is ready!'
+            break
+          fi
+          echo 'Waiting for ClickHouse...'
+          sleep 2
+        done
+        
+        echo 'Initializing ClickHouse tables...'
+        cat /clickhouse_setup.sql | docker exec -i clickhouse clickhouse-client --multiquery || echo 'Failed to initialize ClickHouse tables'
+        
+        # Проверка инициализации ClickHouse
+        echo 'Checking ClickHouse tables...'
+        docker exec clickhouse clickhouse-client --query 'SHOW DATABASES' || echo 'Failed to query ClickHouse'
+        docker exec clickhouse clickhouse-client --query 'SHOW TABLES FROM analytics' || echo 'No tables in analytics database'
+        
+        echo 'Initialization completed successfully!'
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started
+      clickhouse:
+        condition: service_started
+    restart: "no"
+
+  # Streaming processor service
+  streaming-processor:
+    image: bitnami/spark:3.4
+    depends_on:
+      - spark-master
+      - init-services
+      - clickhouse
+      - kafka
+      - minio
+    environment:
+      - SPARK_MODE=client
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=purchases
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - ICEBERG_CATALOG_NAME=iceberg
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+    volumes:
+      - ../data_ingestion:/app/data_ingestion:ro
+      - ../utils:/app/utils:ro
+      - ../batch_processing:/app/batch_processing:ro
+      - ../streaming:/app/streaming:ro
+      - ../configs:/app/configs:ro
+      - spark_repository:/opt/bitnami/spark/.ivy
+    command: >
+      bash -c "
+        # Wait for init-services to complete
+        sleep 45 &&
+        
+        # Install curl for health checks
+        apt-get update && apt-get install -y curl &&
+        
+        # Check if ClickHouse is ready
+        echo 'Checking if ClickHouse is ready...' &&
+        until curl -s http://clickhouse:8123/ >/dev/null; do
+          echo 'Waiting for ClickHouse...'
+          sleep 2
+        done &&
+        echo 'ClickHouse is ready!' &&
+        
+        # Start streaming processor
+        export PYTHONPATH=/app &&
+        /opt/bitnami/spark/bin/spark-submit 
+          --master spark://spark-master:7077 
+          --packages org.apache.hadoop:hadoop-aws:3.3.4,org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.3,org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.3,com.clickhouse:clickhouse-jdbc:0.4.6
+          --conf 'spark.sql.catalog.iceberg=org.apache.iceberg.spark.SparkCatalog'
+          --conf 'spark.sql.catalog.iceberg.type=hadoop'
+          --conf 'spark.sql.catalog.iceberg.warehouse=s3a://analytics/'
+          --conf 'spark.hadoop.fs.s3a.endpoint=http://minio:9000'
+          --conf 'spark.hadoop.fs.s3a.access.key=minioadmin'
+          --conf 'spark.hadoop.fs.s3a.secret.key=minioadmin'
+          --conf 'spark.hadoop.fs.s3a.path.style.access=true'
+          --conf 'spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions'
+          /app/streaming/purchase_processor.py
+      "
+
+  # ClickHouse UI
+  clickhouse-ui:
+    image: spoonest/clickhouse-tabix-web-client
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      - CH_HOST=clickhouse
+      - CH_PORT=8123
+      - CH_USER=default
+      - CH_PASSWORD=
+      - CH_HTTP_PATH=
+      - CLICKHOUSE_HOST=http://clickhouse:8123
+      - TABIX_USER=default
+      - TABIX_PASSWORD=
+      - AUTO_LOGIN=true
+      - SERVER_HOST=0.0.0.0
+      - TABIX_PORT=80
+    ports:
+      - "8124:80"
+    volumes:
+      - ../streaming/tabix-config.json:/var/www/html/tabix-config.json
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+  clickhouse_data:
+  spark_repository:
+
+networks:
+  default:
+    driver: bridge
