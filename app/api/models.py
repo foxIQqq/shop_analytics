@@ -61,9 +61,13 @@ class Purchase(Base):
     id = Column(String, primary_key=True, index=True)
     product_id = Column(String, ForeignKey("products.id"))
     customer_id = Column(Integer, ForeignKey("customers.customer_id"), index=True)
+    seller_id = Column(Integer, ForeignKey("sellers.id"), index=True)
     quantity = Column(Integer)
     total_price = Column(Float)
+    price_at_time = Column(Float, nullable=True)
     purchase_ts = Column(DateTime(timezone=True), server_default=func.now())
+    purchased_at = Column(DateTime(timezone=True), nullable=True)
     
     product = relationship("Product", back_populates="purchases") 
     customer = relationship("Customer", back_populates="purchases") 
+    seller = relationship("Seller", backref="purchases") 

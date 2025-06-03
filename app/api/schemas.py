@@ -34,7 +34,10 @@ class ProductOut(ProductCreate):
 class PurchaseCreate(BaseModel):
     product_id: str
     customer_id: int
+    seller_id: int
     quantity: int = Field(gt=0)
+    price_at_time: Optional[float] = None
+    purchased_at: Optional[datetime] = None
 
 class PurchaseOut(PurchaseCreate):
     id: str

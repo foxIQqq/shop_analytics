@@ -30,16 +30,21 @@ async def create_purchase(
         raise HTTPException(status_code=400, detail="Not enough stock available")
     
     # Расчет общей суммы покупки
-    total_price = product.price * purchase.quantity
+    price_at_time = purchase.price_at_time or product.price
+    total_price = price_at_time * purchase.quantity
+    purchased_at = purchase.purchased_at or datetime.utcnow()
     
     # Создание записи о покупке
     db_purchase = models.Purchase(
         id=str(uuid4()),
         product_id=purchase.product_id,
+        seller_id=purchase.seller_id,
         customer_id=purchase.customer_id,
         quantity=purchase.quantity,
+        price_at_time=price_at_time,
         total_price=total_price,
-        purchase_ts=datetime.utcnow()
+        purchase_ts=datetime.utcnow(),
+        purchased_at=purchased_at
     )
     
     # Обновление остатка товара
@@ -54,7 +59,9 @@ async def create_purchase(
         purchase_data = purchase.dict()
         purchase_data["id"] = db_purchase.id
         purchase_data["total_price"] = total_price
+        purchase_data["price_at_time"] = price_at_time
         purchase_data["purchase_ts"] = db_purchase.purchase_ts.isoformat()
+        purchase_data["purchased_at"] = purchased_at.isoformat()
         await producers.send_purchase(purchase_data)
         logger.info(f"Purchase {db_purchase.id} sent to Kafka")
     except Exception as e:
@@ -135,9 +142,10 @@ async def bulk_send_purchases_to_kafka(
         {
             "customer_id": purchase.customer_id,
             "product_id": purchase.product_id,
+            "seller_id": purchase.seller_id,
             "quantity": purchase.quantity,
-            "price_at_time": 0.0,  # Эти данные должны быть заполнены на основе данных о продукте
-            "purchased_at": datetime.utcnow().isoformat()
+            "price_at_time": purchase.price_at_time or 0.0,
+            "purchased_at": purchase.purchased_at.isoformat() if purchase.purchased_at else datetime.utcnow().isoformat()
         }
         for purchase in purchases_data.purchases
     ]
