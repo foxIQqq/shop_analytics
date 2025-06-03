@@ -14,7 +14,7 @@ class Settings(BaseModel):
     # Kafka
     KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     KAFKA_PRODUCTS_TOPIC: str = "products-topic"
-    KAFKA_PURCHASES_TOPIC: str = "purchases-topic"
+    KAFKA_PURCHASES_TOPIC: str = "purchases"
     KAFKA_SELLERS_TOPIC: str = "sellers-topic"
     KAFKA_CUSTOMERS_TOPIC: str = "customers-topic"
     

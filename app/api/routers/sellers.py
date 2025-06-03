@@ -5,7 +5,7 @@ from api.database import get_db
 from api import schemas, models, auth
 import uuid
 
-router = APIRouter(prefix="/sellers", tags=["Sellers"])
+router = APIRouter(prefix="/sellers")
 
 @router.post("/", response_model=schemas.SellerOut)
 async def create_seller(

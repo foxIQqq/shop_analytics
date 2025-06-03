@@ -5,10 +5,13 @@ from uuid import uuid4
 from api.database import get_db
 from api import schemas, models, auth, producers
 import logging
+from api.schemas import ProductBulkCreate, BulkResponse
+from utils.s3_utils import json_to_parquet_s3
+from api.config import settings
+from datetime import datetime
 
+router = APIRouter(prefix="/products")
 logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.post("/", response_model=schemas.ProductOut)
 async def create_product(
@@ -116,3 +119,52 @@ async def delete_product(
         logger.error(f"Failed to send product deletion to Kafka: {str(e)}")
     
     return None
+
+@router.post("/bulk-s3", response_model=BulkResponse)
+async def bulk_upload_products_to_s3(
+    products_data: ProductBulkCreate,
+    current_user: dict = Depends(auth.get_current_user)
+):
+    """
+    Массовая загрузка товаров в S3 в формате Parquet.
+    Принимает массив объектов для создания товаров, преобразует в Parquet и загружает в S3.
+    Это аналог загрузки products.parquet в скрипте запуска.
+    """
+    # Преобразование данных в формат, понятный для Parquet
+    products_for_s3 = [
+        {
+            "product_id": str(uuid4()),
+            "name": product.name,
+            "description": product.description,
+            "category": product.category,
+            "price": product.price,
+            "stock_quantity": product.stock
+        }
+        for product in products_data.products
+    ]
+    
+    # Имя бакета для сырых данных
+    bucket_name = "shop-raw-data"
+    
+    # Путь для файла в S3
+    object_name = f"products/products_bulk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+    
+    # Загружаем данные в S3
+    success, message = json_to_parquet_s3(
+        data=products_for_s3,
+        bucket_name=bucket_name,
+        object_name=object_name
+    )
+    
+    if success:
+        return {
+            "success_count": len(products_data.products),
+            "error_count": 0,
+            "errors": None
+        }
+    else:
+        return {
+            "success_count": 0,
+            "error_count": 1,
+            "errors": [message]
+        }

@@ -8,8 +8,11 @@ from api.database import get_db
 from api import schemas, models
 from api.auth import get_current_user
 from api.producers import send_customer
+from api.schemas import CustomerBulkCreate, BulkResponse
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(prefix="/customers")
 logger = logging.getLogger(__name__)
 
 @router.post("/", response_model=schemas.CustomerOut)
@@ -144,4 +147,73 @@ async def delete_customer(
     db.delete(db_customer)
     db.commit()
     
-    return None 
+    return None
+
+@router.post("/bulk-postgres", response_model=BulkResponse)
+async def bulk_insert_customers(
+    customers_data: CustomerBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Массовая вставка клиентов в PostgreSQL.
+    Принимает массив объектов для создания клиентов и добавляет их в базу данных.
+    Аналог операции выполнения SQL скрипта insert_customers.sql при инициализации БД.
+    """
+    success_count = 0
+    errors = []
+    
+    # Собираем существующие emails для проверки дубликатов
+    existing_emails = {email[0] for email in db.query(models.Customer.email).all()}
+    
+    # Обрабатываем каждого клиента
+    for idx, customer in enumerate(customers_data.customers):
+        try:
+            # Проверка на дубликаты email
+            if customer.email in existing_emails:
+                errors.append(f"Email already exists: {customer.email}")
+                continue
+                
+            # Добавляем в существующие emails для проверки дубликатов внутри запроса
+            existing_emails.add(customer.email)
+            
+            # Создаем запись
+            db_customer = models.Customer(
+                first_name=customer.first_name,
+                last_name=customer.last_name,
+                email=customer.email,
+                phone=customer.phone
+            )
+            
+            db.add(db_customer)
+            success_count += 1
+            
+        except Exception as e:
+            errors.append(f"Error at index {idx}: {str(e)}")
+    
+    if success_count > 0:
+        try:
+            # Применяем изменения
+            db.commit()
+        except IntegrityError as e:
+            # Если произошла ошибка целостности данных, откатываем транзакцию
+            db.rollback()
+            return {
+                "success_count": 0,
+                "error_count": 1,
+                "errors": [f"Database integrity error: {str(e)}"]
+            }
+        except Exception as e:
+            # В случае других ошибок
+            db.rollback()
+            return {
+                "success_count": 0,
+                "error_count": 1,
+                "errors": [f"Database error: {str(e)}"]
+            }
+    
+    return {
+        "success_count": success_count,
+        "error_count": len(errors),
+        "errors": errors if errors else None
+    } 

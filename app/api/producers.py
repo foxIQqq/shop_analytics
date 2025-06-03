@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from api.config import settings
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 
 try:
     from kafka import KafkaProducer
+    logger.info("Successfully imported KafkaProducer")
     
     class KafkaProducerSingleton:
         _instance = None
@@ -29,11 +31,13 @@ try:
                     logger.info("Successfully connected to Kafka")
                 except Exception as e:
                     logger.error(f"Failed to connect to Kafka: {str(e)}")
+                    logger.error(traceback.format_exc())
                     # Создаем заглушку, чтобы не падало приложение при отсутствии Kafka
                     cls._instance = None
             return cls._instance
-except ImportError:
-    logger.warning("Kafka modules not available, using dummy implementation")
+except ImportError as e:
+    logger.warning(f"Kafka modules not available, using dummy implementation: {str(e)}")
+    logger.warning(traceback.format_exc())
     
     class KafkaProducerSingleton:
         _instance = None
@@ -86,3 +90,39 @@ async def send_customer(customer_data: dict):
             logger.warning(f"Kafka not available, customer data not sent: {customer_data.get('customer_id', 'new')}")
     except Exception as e:
         logger.error(f"Failed to send customer data: {str(e)}")
+
+async def bulk_send_to_kafka(topic: str, messages: list):
+    """
+    Отправляет массив сообщений в указанный топик Kafka.
+    
+    Args:
+        topic: Имя топика Kafka
+        messages: Список сообщений для отправки
+        
+    Returns:
+        tuple: (количество успешно отправленных сообщений, список ошибок)
+    """
+    producer = KafkaProducerSingleton.get_instance()
+    success_count = 0
+    errors = []
+    
+    if not producer:
+        return 0, ["Kafka producer not available"]
+    
+    for idx, message in enumerate(messages):
+        try:
+            producer.send(topic, value=message)
+            success_count += 1
+        except Exception as e:
+            error_msg = f"Failed to send message {idx}: {str(e)}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+    
+    # Гарантируем отправку всех сообщений
+    try:
+        producer.flush(timeout=10)  # Ждем не более 10 секунд
+    except Exception as e:
+        logger.error(f"Error during Kafka producer flush: {str(e)}")
+        errors.append(f"Error during Kafka producer flush: {str(e)}")
+    
+    return success_count, errors

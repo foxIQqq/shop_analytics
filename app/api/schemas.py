@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 class SellerCreate(BaseModel):
@@ -62,3 +62,18 @@ class CustomerOut(CustomerBase):
 
     class Config:
         orm_mode = True
+
+# Bulk insertion schemas
+class CustomerBulkCreate(BaseModel):
+    customers: List[CustomerCreate]
+
+class ProductBulkCreate(BaseModel):
+    products: List[ProductCreate]
+
+class PurchaseBulkCreate(BaseModel):
+    purchases: List[PurchaseCreate]
+
+class BulkResponse(BaseModel):
+    success_count: int
+    error_count: int
+    errors: Optional[List[str]] = None

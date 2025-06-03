@@ -5,11 +5,14 @@ from uuid import uuid4
 from datetime import datetime
 from api.database import get_db
 from api import schemas, models, auth, producers
+from api.producers import send_purchase, bulk_send_to_kafka
+from api.schemas import BulkResponse, PurchaseBulkCreate
+from api.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/purchases", tags=["Purchases"])
+router = APIRouter(prefix="/purchases")
 
 @router.post("/", response_model=schemas.PurchaseOut)
 async def create_purchase(
@@ -116,3 +119,38 @@ async def delete_purchase(
         logger.error(f"Failed to send purchase deletion to Kafka: {str(e)}")
     
     return None
+
+@router.post("/bulk-kafka", response_model=BulkResponse)
+async def bulk_send_purchases_to_kafka(
+    purchases_data: PurchaseBulkCreate,
+    current_user: dict = Depends(auth.get_current_user)
+):
+    """
+    Массовая отправка покупок напрямую в Kafka, минуя PostgreSQL.
+    Принимает массив объектов для создания покупок и отправляет их в топик purchases.
+    Это аналог загрузки данных из kafka_purchases.json в скрипте запуска.
+    """
+    # Подготовка данных для отправки в Kafka
+    purchases_for_kafka = [
+        {
+            "customer_id": purchase.customer_id,
+            "product_id": purchase.product_id,
+            "quantity": purchase.quantity,
+            "price_at_time": 0.0,  # Эти данные должны быть заполнены на основе данных о продукте
+            "purchased_at": datetime.utcnow().isoformat()
+        }
+        for purchase in purchases_data.purchases
+    ]
+    
+    # Отправка данных в Kafka
+    success_count, errors = await bulk_send_to_kafka(
+        settings.KAFKA_PURCHASES_TOPIC, 
+        purchases_for_kafka
+    )
+    
+    # Формируем ответ
+    return {
+        "success_count": success_count,
+        "error_count": len(errors),
+        "errors": errors if errors else None
+    }
