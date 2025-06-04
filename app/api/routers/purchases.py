@@ -20,21 +20,17 @@ async def create_purchase(
     db: Session = Depends(get_db),
     current_user: dict = Depends(auth.get_current_user)
 ):
-    # Проверка существования товара
     product = db.query(models.Product).filter(models.Product.id == purchase.product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     
-    # Проверка наличия товара на складе
     if product.stock < purchase.quantity:
         raise HTTPException(status_code=400, detail="Not enough stock available")
     
-    # Расчет общей суммы покупки
     price_at_time = purchase.price_at_time or product.price
     total_price = price_at_time * purchase.quantity
     purchased_at = purchase.purchased_at or datetime.utcnow()
     
-    # Создание записи о покупке
     db_purchase = models.Purchase(
         id=str(uuid4()),
         product_id=purchase.product_id,
@@ -47,14 +43,12 @@ async def create_purchase(
         purchased_at=purchased_at
     )
     
-    # Обновление остатка товара
     product.stock -= purchase.quantity
     
     db.add(db_purchase)
     db.commit()
     db.refresh(db_purchase)
     
-    # Отправка в Kafka для дальнейшей обработки
     try:
         purchase_data = purchase.dict()
         purchase_data["id"] = db_purchase.id
@@ -110,7 +104,6 @@ async def delete_purchase(
     if db_purchase is None:
         raise HTTPException(status_code=404, detail="Purchase not found")
     
-    # Возвращаем товар на склад
     product = db.query(models.Product).filter(models.Product.id == db_purchase.product_id).first()
     if product:
         product.stock += db_purchase.quantity
@@ -118,7 +111,6 @@ async def delete_purchase(
     db.delete(db_purchase)
     db.commit()
     
-    # Отправка уведомления в Kafka о удалении
     try:
         await producers.send_purchase({"id": purchase_id, "deleted": True})
         logger.info(f"Purchase deletion {purchase_id} sent to Kafka")
@@ -132,12 +124,6 @@ async def bulk_send_purchases_to_kafka(
     purchases_data: PurchaseBulkCreate,
     current_user: dict = Depends(auth.get_current_user)
 ):
-    """
-    Массовая отправка покупок напрямую в Kafka, минуя PostgreSQL.
-    Принимает массив объектов для создания покупок и отправляет их в топик purchases.
-    Это аналог загрузки данных из kafka_purchases.json в скрипте запуска.
-    """
-    # Подготовка данных для отправки в Kafka
     purchases_for_kafka = [
         {
             "customer_id": purchase.customer_id,
@@ -150,13 +136,11 @@ async def bulk_send_purchases_to_kafka(
         for purchase in purchases_data.purchases
     ]
     
-    # Отправка данных в Kafka
     success_count, errors = await bulk_send_to_kafka(
         settings.KAFKA_PURCHASES_TOPIC, 
         purchases_for_kafka
     )
     
-    # Формируем ответ
     return {
         "success_count": success_count,
         "error_count": len(errors),

@@ -23,7 +23,6 @@ async def create_seller(
     db.commit()
     db.refresh(db_seller)
     
-    # Отправка в Kafka можно оставить для асинхронной обработки
     from api.producers import send_seller
     await send_seller(seller.dict())
     
@@ -59,7 +58,6 @@ async def update_seller(
     if not db_seller:
         raise HTTPException(status_code=404, detail="Seller not found")
     
-    # Обновление данных
     for key, value in seller_data.dict(exclude_unset=True).items():
         setattr(db_seller, key, value)
     

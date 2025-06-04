@@ -6,7 +6,6 @@ from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
 from sqlalchemy.orm import Session
 
-# Настраиваем логгер
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -19,14 +18,12 @@ except ImportError as e:
     logger.error(f"Failed to import modules: {str(e)}")
     raise
 
-# Create FastAPI app
 app = FastAPI(
     title="Shop Analytics API",
     description="API for shop analytics and data processing",
     version="1.0.0"
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -35,10 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Настройка rate limiting
 limiter = auth.setup_limiter(app)
 
-# Create database tables
 try:
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully")
@@ -46,7 +41,6 @@ except Exception as e:
     logger.error(f"Failed to create database tables: {str(e)}")
     logger.warning("API will continue to run, but database operations may fail")
 
-# Include routers
 app.include_router(products.router, prefix=settings.API_V1_PREFIX, tags=["products"])
 app.include_router(sellers.router, prefix=settings.API_V1_PREFIX, tags=["sellers"])
 app.include_router(purchases.router, prefix=settings.API_V1_PREFIX, tags=["purchases"])
@@ -66,13 +60,11 @@ def health_check():
     kafka_status = "connected"
     
     try:
-        # Здесь можно добавить проверку соединения с БД
         pass
     except Exception:
         db_status = "disconnected"
         
     try:
-        # Здесь можно добавить проверку соединения с Kafka
         pass
     except Exception:
         kafka_status = "disconnected"
@@ -85,8 +77,6 @@ def health_check():
 
 @app.post(f"{settings.API_V1_PREFIX}/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # Здесь должна быть проверка пользователя в БД
-    # Для примера используем заглушку
     if form_data.username != "admin" or form_data.password != "admin":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

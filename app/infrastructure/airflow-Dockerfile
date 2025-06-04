@@ -1,0 +1,61 @@
+FROM apache/airflow:2.8.1
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        default-jre \
+        curl \
+        wget \
+    && apt-get autoremove -yqq --purge \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN java -version && \
+    JAVA_HOME=$(readlink -f /usr/bin/java | sed "s:/bin/java::") && \
+    echo "export JAVA_HOME=$JAVA_HOME" >> /etc/profile.d/java.sh && \
+    echo "export JAVA_HOME=$JAVA_HOME" >> /home/airflow/.bashrc
+
+RUN mkdir -p /opt/airflow/jars /opt/airflow/data_ingestion /opt/airflow/utils /opt/airflow/batch_processing && \
+    chown -R airflow:root /opt/airflow/jars /opt/airflow/data_ingestion /opt/airflow/utils /opt/airflow/batch_processing
+
+USER airflow
+
+RUN pip install --user --no-cache-dir \
+    pyspark==3.4.1 \
+    py4j==0.10.9.7 \
+    findspark \
+    minio \
+    psycopg2-binary \
+    kafka-python \
+    pyarrow \
+    pandas \
+    'pyspark[sql, pandas_on_spark]' \
+    requests \
+    pytz \
+    numpy
+
+USER root
+
+RUN cd /opt/airflow/jars && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar && \
+    curl -L -O https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.4.1/spark-sql-kafka-0-10_2.12-3.4.1.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.3.1/kafka-clients-3.3.1.jar && \
+    curl -L -O https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.4_2.12/1.4.3/iceberg-spark-runtime-3.4_2.12-1.4.3.jar && \
+    curl -L -O https://repo1.maven.org/maven2/com/clickhouse/clickhouse-jdbc/0.4.6/clickhouse-jdbc-0.4.6.jar && \
+    chown -R airflow:root /opt/airflow/jars
+
+RUN echo 'export PYSPARK_PYTHON=/usr/local/bin/python' >> /etc/profile.d/spark.sh && \
+    echo 'export SPARK_HOME=/home/airflow/.local/lib/python3.8/site-packages/pyspark' >> /etc/profile.d/spark.sh && \
+    echo 'export PATH="${PATH}:${SPARK_HOME}/bin"' >> /etc/profile.d/spark.sh && \
+    echo 'export PYTHONPATH="${SPARK_HOME}/python:${SPARK_HOME}/python/lib/py4j-0.10.9.7-src.zip:${PYTHONPATH}"' >> /etc/profile.d/spark.sh && \
+    echo 'export PYSPARK_SUBMIT_ARGS="--jars /opt/airflow/jars/hadoop-aws-3.3.4.jar,/opt/airflow/jars/aws-java-sdk-bundle-1.12.262.jar,/opt/airflow/jars/spark-sql-kafka-0-10_2.12-3.4.1.jar,/opt/airflow/jars/kafka-clients-3.3.1.jar,/opt/airflow/jars/iceberg-spark-runtime-3.4_2.12-1.4.3.jar,/opt/airflow/jars/clickhouse-jdbc-0.4.6.jar pyspark-shell"' >> /etc/profile.d/spark.sh
+
+RUN echo 'export PYSPARK_PYTHON=/usr/local/bin/python' >> /home/airflow/.bashrc && \
+    echo 'export SPARK_HOME=/home/airflow/.local/lib/python3.8/site-packages/pyspark' >> /home/airflow/.bashrc && \
+    echo 'export PATH="${PATH}:${SPARK_HOME}/bin"' >> /home/airflow/.bashrc && \
+    echo 'export PYTHONPATH="${SPARK_HOME}/python:${SPARK_HOME}/python/lib/py4j-0.10.9.7-src.zip:${PYTHONPATH}"' >> /home/airflow/.bashrc && \
+    echo 'export PYSPARK_SUBMIT_ARGS="--jars /opt/airflow/jars/hadoop-aws-3.3.4.jar,/opt/airflow/jars/aws-java-sdk-bundle-1.12.262.jar,/opt/airflow/jars/spark-sql-kafka-0-10_2.12-3.4.1.jar,/opt/airflow/jars/kafka-clients-3.3.1.jar,/opt/airflow/jars/iceberg-spark-runtime-3.4_2.12-1.4.3.jar,/opt/airflow/jars/clickhouse-jdbc-0.4.6.jar pyspark-shell"' >> /home/airflow/.bashrc
+
+USER airflow 

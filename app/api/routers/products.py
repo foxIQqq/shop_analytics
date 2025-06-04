@@ -19,11 +19,9 @@ async def create_product(
     db: Session = Depends(get_db),
     current_user: dict = Depends(auth.get_current_user)
 ):
-    # Валидация данных
     if product.price <= 0:
         raise HTTPException(status_code=400, detail="Price must be positive")
     
-    # Создаем запись в БД
     db_product = models.Product(
         id=str(uuid4()),
         name=product.name,
@@ -38,7 +36,6 @@ async def create_product(
     db.commit()
     db.refresh(db_product)
     
-    # Отправка в Kafka для дальнейшей обработки
     try:
         await producers.send_product(product.dict())
         logger.info(f"Product {db_product.id} sent to Kafka")
@@ -80,14 +77,12 @@ async def update_product(
     if db_product is None:
         raise HTTPException(status_code=404, detail="Product not found")
     
-    # Обновление данных
     for key, value in product_data.dict().items():
         setattr(db_product, key, value)
     
     db.commit()
     db.refresh(db_product)
     
-    # Отправка в Kafka для обновления в других системах
     try:
         product_dict = product_data.dict()
         product_dict["id"] = product_id
@@ -111,7 +106,6 @@ async def delete_product(
     db.delete(db_product)
     db.commit()
     
-    # Отправка уведомления в Kafka о удалении
     try:
         await producers.send_product({"id": product_id, "deleted": True})
         logger.info(f"Product deletion {product_id} sent to Kafka")
@@ -125,12 +119,6 @@ async def bulk_upload_products_to_s3(
     products_data: ProductBulkCreate,
     current_user: dict = Depends(auth.get_current_user)
 ):
-    """
-    Массовая загрузка товаров в S3 в формате Parquet.
-    Принимает массив объектов для создания товаров, преобразует в Parquet и загружает в S3.
-    Это аналог загрузки products.parquet в скрипте запуска.
-    """
-    # Преобразование данных в формат, понятный для Parquet
     products_for_s3 = [
         {
             "product_id": str(uuid4()),
@@ -143,13 +131,10 @@ async def bulk_upload_products_to_s3(
         for product in products_data.products
     ]
     
-    # Имя бакета для сырых данных
     bucket_name = "shop-raw-data"
     
-    # Путь для файла в S3
     object_name = f"products/products_bulk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
     
-    # Загружаем данные в S3
     success, message = json_to_parquet_s3(
         data=products_for_s3,
         bucket_name=bucket_name,

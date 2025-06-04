@@ -1,15 +1,12 @@
-from pyspark.sql.functions import sum, count, max, col, datediff, lit, to_date
+from pyspark.sql.functions import sum, count, max, col, datediff, lit, to_date, col
 from datetime import datetime
 
 def run_aggregations(spark):
-    # Чтение из Iceberg-таблиц
     purchases = spark.table("analytics.purchases")
     products = spark.table("analytics.products")
 
-    # Присоединяем для получения категорий и нужных полей
     df = purchases.join(products, on="product_id")
 
-    # ===== 1. Продажи по категориям =====
     category_sales = df.groupBy("category").agg(
         sum("price_at_time").alias("total_revenue"),
         count("*").alias("total_sales")
@@ -27,7 +24,6 @@ def run_aggregations(spark):
         .mode("overwrite") \
         .save()
 
-    # ===== 2. RFM-анализ =====
     current_date = datetime.today().strftime("%Y-%m-%d")
     rfm = df.groupBy("customer_id").agg(
         max("purchased_at").alias("last_purchase"),
@@ -47,7 +43,6 @@ def run_aggregations(spark):
         .mode("overwrite") \
         .save()
 
-    # ===== 3. Топ товаров =====
     top_products = df.groupBy("product_id").agg(
         count("*").alias("purchase_count"),
         sum("price_at_time").alias("revenue")

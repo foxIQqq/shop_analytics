@@ -13,7 +13,6 @@ from api.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Условный импорт slowapi
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
@@ -24,16 +23,13 @@ except ImportError:
     logger.warning("slowapi не установлен, ограничение запросов отключено")
     USE_RATE_LIMITING = False
 
-# Константы для JWT берем из настроек
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
-# Хеширование паролей
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/token")
 
-# Функции аутентификации
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -59,9 +55,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         if username is None:
             raise credentials_exception
         
-        # Здесь должен быть запрос к базе данных для получения пользователя
-        # Например: user = db.query(models.User).filter(models.User.username == username).first()
-        # Заглушка для текущей реализации
         user = {"username": username, "is_active": True}
         
         if user is None:
@@ -73,10 +66,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     
     return user
 
-# Добавить в роутеры:
-# @router.post("/", dependencies=[Depends(get_current_user)])
-
-# Функция для добавления rate limiting, если slowapi доступен
 def setup_limiter(app):
     if USE_RATE_LIMITING:
         limiter = Limiter(key_func=get_remote_address)
@@ -87,8 +76,3 @@ def setup_limiter(app):
     else:
         logger.warning("Rate limiting не настроен из-за отсутствия slowapi")
         return None
-
-# @app.get("/api/v1/products/")
-# @limiter.limit("5/minute")
-# async def get_products(request: Request):
-#     # ...

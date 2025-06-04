@@ -23,7 +23,6 @@ class Customer(Base):
     phone = Column(String(20))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Можно добавить отношения к покупкам
     purchases = relationship("Purchase", back_populates="customer")
 
 class Seller(Base):

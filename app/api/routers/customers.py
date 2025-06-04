@@ -21,7 +21,6 @@ async def create_customer(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Создает нового клиента."""
     db_customer = models.Customer(
         first_name=customer.first_name,
         last_name=customer.last_name,
@@ -33,7 +32,6 @@ async def create_customer(
     db.commit()
     db.refresh(db_customer)
     
-    # Отправляем данные в Kafka
     customer_data = {
         "customer_id": db_customer.customer_id,
         "first_name": db_customer.first_name,
@@ -44,7 +42,6 @@ async def create_customer(
     }
     
     try:
-        # Если есть продюсер для клиентов
         if "send_customer" in globals():
             await send_customer(customer_data)
     except Exception as e:
@@ -59,7 +56,6 @@ async def read_customers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Возвращает список клиентов с пагинацией."""
     customers = db.query(models.Customer).offset(skip).limit(limit).all()
     return customers
 
@@ -69,7 +65,6 @@ async def read_customer(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Возвращает клиента по ID."""
     customer = db.query(models.Customer).filter(models.Customer.customer_id == customer_id).first()
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -82,12 +77,10 @@ async def update_customer(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Обновляет данные клиента."""
     db_customer = db.query(models.Customer).filter(models.Customer.customer_id == customer_id).first()
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     
-    # Обновляем только переданные поля
     if customer.first_name is not None:
         db_customer.first_name = customer.first_name
     if customer.last_name is not None:
@@ -100,7 +93,6 @@ async def update_customer(
     db.commit()
     db.refresh(db_customer)
     
-    # Отправляем данные в Kafka
     customer_data = {
         "customer_id": db_customer.customer_id,
         "first_name": db_customer.first_name,
@@ -112,7 +104,6 @@ async def update_customer(
     }
     
     try:
-        # Если есть продюсер для клиентов
         if "send_customer" in globals():
             await send_customer(customer_data)
     except Exception as e:
@@ -126,19 +117,16 @@ async def delete_customer(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Удаляет клиента."""
     db_customer = db.query(models.Customer).filter(models.Customer.customer_id == customer_id).first()
     if db_customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
     
-    # Отправляем данные в Kafka перед удалением
     customer_data = {
         "customer_id": db_customer.customer_id,
         "operation": "delete"
     }
     
     try:
-        # Если есть продюсер для клиентов
         if "send_customer" in globals():
             await send_customer(customer_data)
     except Exception as e:
@@ -155,29 +143,19 @@ async def bulk_insert_customers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """
-    Массовая вставка клиентов в PostgreSQL.
-    Принимает массив объектов для создания клиентов и добавляет их в базу данных.
-    Аналог операции выполнения SQL скрипта insert_customers.sql при инициализации БД.
-    """
     success_count = 0
     errors = []
     
-    # Собираем существующие emails для проверки дубликатов
     existing_emails = {email[0] for email in db.query(models.Customer.email).all()}
     
-    # Обрабатываем каждого клиента
     for idx, customer in enumerate(customers_data.customers):
         try:
-            # Проверка на дубликаты email
             if customer.email in existing_emails:
                 errors.append(f"Email already exists: {customer.email}")
                 continue
                 
-            # Добавляем в существующие emails для проверки дубликатов внутри запроса
             existing_emails.add(customer.email)
             
-            # Создаем запись
             db_customer = models.Customer(
                 first_name=customer.first_name,
                 last_name=customer.last_name,
@@ -193,10 +171,8 @@ async def bulk_insert_customers(
     
     if success_count > 0:
         try:
-            # Применяем изменения
             db.commit()
         except IntegrityError as e:
-            # Если произошла ошибка целостности данных, откатываем транзакцию
             db.rollback()
             return {
                 "success_count": 0,
@@ -204,7 +180,6 @@ async def bulk_insert_customers(
                 "errors": [f"Database integrity error: {str(e)}"]
             }
         except Exception as e:
-            # В случае других ошибок
             db.rollback()
             return {
                 "success_count": 0,

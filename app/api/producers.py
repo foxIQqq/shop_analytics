@@ -6,7 +6,6 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
-# Настраиваем логирование
 logging.basicConfig(level=logging.INFO)
 
 try:
@@ -32,7 +31,6 @@ try:
                 except Exception as e:
                     logger.error(f"Failed to connect to Kafka: {str(e)}")
                     logger.error(traceback.format_exc())
-                    # Создаем заглушку, чтобы не падало приложение при отсутствии Kafka
                     cls._instance = None
             return cls._instance
 except ImportError as e:
@@ -92,16 +90,6 @@ async def send_customer(customer_data: dict):
         logger.error(f"Failed to send customer data: {str(e)}")
 
 async def bulk_send_to_kafka(topic: str, messages: list):
-    """
-    Отправляет массив сообщений в указанный топик Kafka.
-    
-    Args:
-        topic: Имя топика Kafka
-        messages: Список сообщений для отправки
-        
-    Returns:
-        tuple: (количество успешно отправленных сообщений, список ошибок)
-    """
     producer = KafkaProducerSingleton.get_instance()
     success_count = 0
     errors = []
@@ -118,9 +106,8 @@ async def bulk_send_to_kafka(topic: str, messages: list):
             logger.error(error_msg)
             errors.append(error_msg)
     
-    # Гарантируем отправку всех сообщений
     try:
-        producer.flush(timeout=10)  # Ждем не более 10 секунд
+        producer.flush(timeout=10)
     except Exception as e:
         logger.error(f"Error during Kafka producer flush: {str(e)}")
         errors.append(f"Error during Kafka producer flush: {str(e)}")

@@ -1,13 +1,5 @@
--- --------------------------------------------------------------------
--- streaming/clickhouse_setup.sql
---
--- Содержит DDL для ClickHouse: создание базы analytics и необходимых таблиц.
--- --------------------------------------------------------------------
-
--- 1) Создадим Базу
 CREATE DATABASE IF NOT EXISTS analytics;
 
--- 2) Таблица-факт: агрегаты покупок по категории за каждый час
 CREATE TABLE IF NOT EXISTS analytics.purchases_hourly
 (
     product_category String,
@@ -17,13 +9,11 @@ CREATE TABLE IF NOT EXISTS analytics.purchases_hourly
     total_amount     Float64
 )
 ENGINE = MergeTree()
-PARTITION BY toYYYYMMDD(window_start)  -- Партиционирование по дням для более эффективного удаления старых данных
+PARTITION BY toYYYYMMDD(window_start)
 ORDER BY (product_category, window_start)
 TTL window_end + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192;
 
-
--- 3) Материализованное представление: топ-5 категорий по сумме count
 CREATE TABLE IF NOT EXISTS analytics.top_categories
 (
     product_category String,
@@ -46,7 +36,6 @@ GROUP BY product_category
 ORDER BY total_cnt DESC
 LIMIT 5;
 
--- 4) Таблица для анализа покупок по часам дня
 CREATE TABLE IF NOT EXISTS analytics.hourly_sales_patterns
 (
     hour_of_day      UInt8,
@@ -71,7 +60,6 @@ SELECT
 FROM analytics.purchases_hourly
 GROUP BY hour_of_day, product_category;
 
--- 5) Таблица для анализа продаж по дням недели
 CREATE TABLE IF NOT EXISTS analytics.weekly_sales_patterns
 (
     day_of_week      UInt8,
@@ -96,7 +84,6 @@ SELECT
 FROM analytics.purchases_hourly
 GROUP BY day_of_week, product_category;
 
--- 6) Таблица для анализа трендов продаж по месяцам
 CREATE TABLE IF NOT EXISTS analytics.monthly_sales_trends
 (
     year_month       String,

@@ -3,7 +3,7 @@ from product_etl import process_products
 from customer_etl import process_customers
 from purchases_etl import process_purchases
 from aggregations import run_aggregations
-from utils.s3_client import get_s3_client  # Импортируем MinIO-клиент
+from utils.s3_client import get_s3_client
 import os
 
 def ensure_analytics_bucket():
@@ -16,7 +16,7 @@ def ensure_analytics_bucket():
             print(f"Bucket '{bucket_analytics}' created.")
         except Exception as e:
             print(f"Failed to create bucket '{bucket_analytics}': {e}")
-            exit(1)  # Завершаем, если не удалось создать бакет
+            exit(1)
 
 def main():
     ensure_analytics_bucket()
@@ -38,7 +38,7 @@ def main():
     run_aggregations(spark)
 
     spark.stop()
-    print("✅ DAILY ETL JOB COMPLETE")
+    print("DAILY ETL JOB COMPLETE")
 
 if __name__ == "__main__":
     main()

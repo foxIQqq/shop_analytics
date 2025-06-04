@@ -3,18 +3,14 @@ from pyspark.sql.functions import to_date, col
 
 
 def process_purchases(spark: SparkSession):
-    # 1. Чтение из stage-слоя
     df = spark.read.parquet("s3a://shop-stage-data/purchases/")
 
-    # 2. Очистка и базовая обработка данных
     df_clean = (
         df.dropDuplicates()
         .dropna(subset=["customer_id", "product_id", "purchased_at"])
-        # добавляем колонку purchase_date для партиционирования
         .withColumn("purchase_date", to_date(col("purchased_at")))
     )
 
-    # 3. Явное создание таблицы Iceberg, если её нет
     spark.sql("""
         CREATE TABLE IF NOT EXISTS analytics.purchases (
             customer_id INT,
@@ -29,7 +25,6 @@ def process_purchases(spark: SparkSession):
         PARTITIONED BY (purchase_date)
     """)
 
-    # 4. Запись в таблицу Iceberg (теперь df_clean содержит purchase_date)
     df_clean.writeTo("analytics.purchases").overwritePartitions()
 
-    print("✅ Purchases ETL complete")
+    print("Purchases ETL complete")

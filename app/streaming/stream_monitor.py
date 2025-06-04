@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-# ----------------------------------------------------------------------
-# streaming/stream_monitor.py
-#
-# Скрипт для мониторинга состояния Spark Streaming job и метрик ClickHouse.
-# Выводит статистику по количеству обработанных записей, задержкам и т.д.
-# ----------------------------------------------------------------------
+
 
 import sys
 import os
-# Добавляем корневую директорию проекта в путь поиска модулей
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time
@@ -21,7 +15,6 @@ from typing import Dict, Any, List, Optional
 
 from utils.ch_client import get_clickhouse_client, execute_with_retry
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -31,7 +24,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Параметры из окружения
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 
@@ -51,7 +43,6 @@ def check_spark_job_status() -> Dict[str, Any]:
         Dict с информацией о статусе job.
     """
     try:
-        # Получаем информацию о активных приложениях
         response = requests.get(f"{SPARK_UI_URL}/api/v1/applications", timeout=5)
         if response.status_code != 200:
             logger.error(f"Failed to get Spark applications: {response.status_code}")
@@ -61,7 +52,6 @@ def check_spark_job_status() -> Dict[str, Any]:
         if not apps:
             return {"status": "not_running", "message": "No active Spark applications found"}
         
-        # Находим наше приложение PurchaseProcessor
         purchase_app = None
         for app in apps:
             if app.get("name") == "PurchaseProcessor":
@@ -73,7 +63,6 @@ def check_spark_job_status() -> Dict[str, Any]:
         
         app_id = purchase_app.get("id")
         
-        # Получаем информацию о streaming jobs
         response = requests.get(f"{SPARK_UI_URL}/api/v1/applications/{app_id}/streaming/statistics", timeout=5)
         if response.status_code != 200:
             logger.error(f"Failed to get streaming statistics: {response.status_code}")
@@ -86,7 +75,6 @@ def check_spark_job_status() -> Dict[str, Any]:
         
         streaming_stats = response.json()
         
-        # Получаем информацию о batch jobs
         response = requests.get(f"{SPARK_UI_URL}/api/v1/applications/{app_id}/streaming/batches", timeout=5)
         if response.status_code != 200:
             logger.error(f"Failed to get streaming batches: {response.status_code}")
@@ -127,11 +115,9 @@ def get_clickhouse_metrics() -> Dict[str, Any]:
             database="analytics"
         )
         
-        # Общее количество записей
         total_records_query = "SELECT count() FROM analytics.purchases_hourly"
         total_records = execute_with_retry(client, total_records_query)[0][0]
         
-        # Статистика по категориям товаров
         categories_query = """
             SELECT 
                 product_category,
@@ -144,7 +130,6 @@ def get_clickhouse_metrics() -> Dict[str, Any]:
         """
         categories_stats = execute_with_retry(client, categories_query)
         
-        # Распределение по времени (последние 24 часа)
         time_query = """
             SELECT 
                 toStartOfHour(window_start) as hour,
@@ -157,7 +142,6 @@ def get_clickhouse_metrics() -> Dict[str, Any]:
         """
         time_stats = execute_with_retry(client, time_query)
         
-        # Информация о таблицах и их размере
         tables_query = """
             SELECT
                 table,
@@ -210,7 +194,6 @@ def print_metrics(spark_status: Dict[str, Any], clickhouse_metrics: Dict[str, An
     print(f"STREAMING JOB MONITOR - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
     
-    # Статус Spark Job
     print("\nSPARK JOB STATUS:")
     print(f"Status: {spark_status.get('status', 'unknown')}")
     if spark_status.get('message'):
@@ -218,7 +201,6 @@ def print_metrics(spark_status: Dict[str, Any], clickhouse_metrics: Dict[str, An
     if spark_status.get('app_id'):
         print(f"Application ID: {spark_status.get('app_id')}")
     
-    # Статистика Streaming (если доступна)
     if spark_status.get('status') == 'running' and spark_status.get('streaming_stats'):
         stats = spark_status['streaming_stats']
         print("\nSTREAMING STATISTICS:")
@@ -232,26 +214,22 @@ def print_metrics(spark_status: Dict[str, Any], clickhouse_metrics: Dict[str, An
         if stats.get('avgSchedulingDelay') is not None:
             print(f"Average scheduling delay: {stats.get('avgSchedulingDelay', 0):.2f} ms")
     
-    # ClickHouse метрики
     print("\nCLICKHOUSE METRICS:")
     if clickhouse_metrics.get('status') == 'ok':
         print(f"Total records in purchases_hourly: {clickhouse_metrics.get('total_records', 0):,}")
         
-        # Таблицы и их размеры
         if clickhouse_metrics.get('tables_stats'):
             print("\nTABLES:")
             for table in clickhouse_metrics['tables_stats']:
                 print(f"  {table['table']}: {table['size']} ({table['rows']:,} rows), "
                       f"Last modified: {table['last_modified']}")
         
-        # Топ категорий
         if clickhouse_metrics.get('categories_stats'):
             print("\nTOP CATEGORIES:")
             for i, cat in enumerate(clickhouse_metrics['categories_stats'][:5], 1):
                 print(f"  {i}. {cat['category']}: {cat['total_purchases']:,} purchases, "
                       f"${cat['total_amount']:,.2f} total")
         
-        # Статистика по времени (последние записи)
         if clickhouse_metrics.get('time_stats'):
             print("\nRECENT ACTIVITY (last 24h):")
             recent_stats = clickhouse_metrics['time_stats'][-5:] if len(clickhouse_metrics['time_stats']) > 5 else clickhouse_metrics['time_stats']
@@ -264,9 +242,7 @@ def print_metrics(spark_status: Dict[str, Any], clickhouse_metrics: Dict[str, An
 
 
 def main():
-    """
-    Основная функция: собирает метрики и выводит их.
-    """
+
     parser = argparse.ArgumentParser(description='Monitor Spark Streaming job and ClickHouse metrics')
     parser.add_argument('--watch', '-w', action='store_true', help='Watch mode: continuously monitor')
     parser.add_argument('--interval', '-i', type=int, default=60, help='Interval in seconds (for watch mode)')
@@ -278,7 +254,6 @@ def main():
         clickhouse_metrics = get_clickhouse_metrics()
         
         if args.json:
-            # Вывод в формате JSON
             output = {
                 "timestamp": datetime.now().isoformat(),
                 "spark_status": spark_status,
@@ -286,7 +261,6 @@ def main():
             }
             print(json.dumps(output, indent=2))
         else:
-            # Вывод в человекочитаемом формате
             print_metrics(spark_status, clickhouse_metrics)
     
     if args.watch:

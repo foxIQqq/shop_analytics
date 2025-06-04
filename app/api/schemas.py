@@ -66,7 +66,6 @@ class CustomerOut(CustomerBase):
     class Config:
         orm_mode = True
 
-# Bulk insertion schemas
 class CustomerBulkCreate(BaseModel):
     customers: List[CustomerCreate]
 

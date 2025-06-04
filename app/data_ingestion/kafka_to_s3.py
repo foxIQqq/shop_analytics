@@ -1,5 +1,3 @@
-# data_ingestion/kafka_to_s3.py
-
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, to_date
@@ -8,28 +6,18 @@ from pyspark.sql.types import StructType, StructField, IntegerType, DoubleType, 
 from utils.s3_client import get_s3_client
 
 def start_streaming():
-    """
-    Читаем из Kafka топик purchases и сохраняем сообщения в S3 (MinIO) в формате Parquet,
-    партиционируя по дате (purchase_date). Перед записью проверяем и при необходимости создаём
-    бакет S3_BUCKET_RAW и бакет S3_BUCKET_CHECKPOINT в MinIO.
-    """
-
-    # 0. Получаем MinIO-клиент и проверяем наличие бакетов
     s3 = get_s3_client()
     bucket_raw = os.getenv("S3_BUCKET_RAW", "shop-raw-data")
     bucket_checkpoint = os.getenv("S3_BUCKET_CHECKPOINT", "shop-checkpoints")
 
-    # Если бакета для "сырых" данных нет, создаём его
     if not s3.bucket_exists(bucket_raw):
         try:
             s3.make_bucket(bucket_raw)
             print(f"Bucket '{bucket_raw}' created.")
         except Exception as e:
             print(f"Failed to create bucket '{bucket_raw}': {e}")
-            # Если бакет не удалось создать, завершаем
             return
 
-    # Если бакета для чекпоинтов нет, создаём его
     if not s3.bucket_exists(bucket_checkpoint):
         try:
             s3.make_bucket(bucket_checkpoint)
@@ -38,7 +26,6 @@ def start_streaming():
             print(f"Failed to create bucket '{bucket_checkpoint}': {e}")
             return
 
-    # 1. Создаём SparkSession с конфигурацией S3A (MinIO)
     spark = SparkSession.builder \
         .appName("KafkaToS3") \
         .config("spark.hadoop.fs.s3a.endpoint", os.getenv("MINIO_ENDPOINT", "http://minio:9000")) \
@@ -48,7 +35,6 @@ def start_streaming():
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
 
-    # 2. Определяем схему JSON-сообщений, которые приходят из Kafka
     purchase_schema = StructType([
         StructField("customer_id", IntegerType(), True),
         StructField("product_id", IntegerType(), True),
@@ -59,7 +45,6 @@ def start_streaming():
     ])
 
 
-    # 3. Читаем данные из Kafka (топик purchases), начиная с последнего оффсета
     kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     kafka_topic = os.getenv("KAFKA_TOPIC_PURCHASES", "purchases")
     df_raw = spark.readStream \
@@ -69,15 +54,12 @@ def start_streaming():
         .option("startingOffsets", "earliest") \
         .load()
 
-    # 4. Преобразуем поле value (bytes) в строку, затем в поля по схеме
     df_parsed = df_raw.selectExpr("CAST(value AS STRING) as json_str") \
         .select(from_json(col("json_str"), purchase_schema).alias("data")) \
         .select("data.*")
     
-    # 5. Добавляем колонку purchase_date для партиционирования
     df_with_date = df_parsed.withColumn("purchase_date", to_date(col("purchased_at")))
 
-    # 6. Пишем в MinIO (S3) в режиме микробатчей, партиционируя по дате
     raw_path = f"s3a://{bucket_raw}/purchases/"
     checkpoint_path = f"s3a://{bucket_checkpoint}/purchases/"
 
@@ -98,5 +80,28 @@ def start_streaming():
     finally:
         spark.stop()
 
+def main():
+    try:
+        required_env_vars = [
+            "MINIO_ENDPOINT", 
+            "MINIO_ROOT_USER", 
+            "MINIO_ROOT_PASSWORD",
+            "KAFKA_BOOTSTRAP_SERVERS",
+            "KAFKA_TOPIC_PURCHASES",
+            "S3_BUCKET_RAW",
+            "S3_BUCKET_CHECKPOINT"
+        ]
+        
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            print(f"Warning: Missing environment variables: {', '.join(missing_vars)}")
+            print("Using default values for missing variables")
+        
+        start_streaming()
+        return True
+    except Exception as e:
+        print(f"Error in Kafka to S3 processing: {e}")
+        return False
+
 if __name__ == "__main__":
-    start_streaming()
+    main()
